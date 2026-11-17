@@ -1,7 +1,5 @@
 CAN 扩展任务提交说明（任务 1 + 任务 2）
 
-仓库：https://github.com/guan-o/embedded-training （main）
-
 编译：cargo build --locked；工具链 1.99.1 / 目标 thumbv7em-none-eabihf；
       生成 dm-mc02-cmsis-dap ELF，完整输出见仓库 build-success.log。
 
@@ -19,4 +17,3 @@ CAN 扩展任务提交说明（任务 1 + 任务 2）
 - 数据段 5 Mbit/s：prescaler=1，seg1=11，seg2=4，SJW=4（16 tq，采样点 75%），BRS 打开。
 - TDC：直接写 TDCR，TDCO=10 mtq（≈125 ns，覆盖 MCP2542FD TX→RX 环路延迟），TDCF=0。
 
-状态：固件已通过目标编译与链接；硬件行为为预期，尚未上板验证。
