@@ -1,17 +1,18 @@
-CAN 扩展任务提交说明
+CAN 扩展任务提交说明（任务 1 + 任务 2）
+
+仓库：https://github.com/guan-o/embedded-training （main）
 
 编译：cargo build --locked；工具链 1.99.1 / 目标 thumbv7em-none-eabihf；
       生成 dm-mc02-cmsis-dap ELF，完整输出见仓库 build-success.log。
 
 入口 / 数据路径
-- 入口：wiring.rs 用 can1_fd 初始化 FDCAN1，再 buffered_fd 拆成可共享的
-  can_tx/can_rx；main.rs 用 join5 并发跑 USB、控制串口、UART、CMSIS-DAP、gs_usb。
-- Classical CAN 桥接：FDCAN 中断把帧放入 RxFdBuf(32) → 控制串口任务 select 收到 →
-  format_frame 序列化并主动写回主机（RX …）；主机 CAN TX … → execute → can_tx.write → 发送。
-- CAN FD：CANFD TX <id> <len> <F|B> <hex> 构造 FdFrame（支持 12/32/64 字节），转发为 RXFD …。
-- SocketCAN：gs_usb.rs 实现厂商接口 + bulk IN/OUT 及控制请求
-  （HOST_FORMAT / BITTIMING / MODE / BT_CONST / DEVICE_CONFIG / GET_STATE），
-  主机帧 ↔ FdFrame 双向转换，Linux 端 gs_usb 驱动映射为 can0。
+- 入口：wiring.rs 用 can1_fd 初始化 FDCAN1（CAN FD + BRS + TDC），再 buffered_fd 拆成
+  可共享的 can_tx/can_rx；main.rs 用 join4 并发运行 USB 设备、控制串口、UART 串口、CMSIS-DAP。
+- 任务 1（Classical CAN 双向桥接）：FDCAN 中断把帧放入 RxFdBuf(32) → 控制串口任务 select
+  收到 → format_frame 序列化并主动写回主机（RX …）；主机 CAN TX <id> <hex> → execute →
+  can_tx.write → 发送。
+- 任务 2（CAN FD）：CANFD TX <id> <len> <F|B> <hex> 构造 FdFrame（支持 12/32/64 字节），
+  转发为 RXFD …。
 
 关键配置（FDCAN 内核 80 MHz）
 - 仲裁段 1 Mbit/s：prescaler=1，seg1=59，seg2=20，SJW=20（80 tq，采样点 75%）。

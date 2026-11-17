@@ -3,7 +3,6 @@
 
 mod board;
 mod dap_usb;
-mod gs_usb;
 mod protocol;
 pub mod swd;
 mod wiring;
@@ -11,7 +10,7 @@ mod wiring;
 use board::Usb;
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
-use embassy_futures::join::join5;
+use embassy_futures::join::join4;
 use embassy_stm32::can::{BufferedFdCanReceiver, BufferedFdCanSender};
 use embassy_stm32::usart::BufferedUart;
 use embassy_usb::{
@@ -54,18 +53,15 @@ async fn main(_spawner: Spawner) {
     let dap = dap_usb::DapUsb::new(&mut builder);
     let control = CdcAcmClass::new(&mut builder, CTL_STATE.init(State::new()), PACKET as u16);
     let serial = CdcAcmClass::new(&mut builder, UART_STATE.init(State::new()), PACKET as u16);
-    // SocketCAN (gs_usb) vendor interface with its two bulk endpoints.
-    let gs = gs_usb::GsUsb::new(&mut builder);
     let mut device = builder.build();
 
     let Ports { can_tx, can_rx, uart } = ports;
 
-    join5(
+    join4(
         device.run(),
-        control_port(control, can_tx.clone(), can_rx.clone(), swd),
+        control_port(control, can_tx, can_rx, swd),
         uart_port(serial, uart),
         dap.run(),
-        gs.run(can_tx, can_rx),
     )
     .await;
 }
