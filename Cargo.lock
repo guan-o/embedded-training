@@ -206,6 +206,7 @@ dependencies = [
  "heapless",
  "panic-halt",
  "static_cell",
+ "stm32-metapac",
 ]
 
 [[package]]

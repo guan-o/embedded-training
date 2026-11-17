@@ -3,14 +3,16 @@
 
 mod board;
 mod dap_usb;
+mod gs_usb;
 mod protocol;
 pub mod swd;
 mod wiring;
 
 use board::Usb;
 use embassy_executor::Spawner;
-use embassy_futures::{join::join4, select::select};
-use embassy_stm32::can::Can;
+use embassy_futures::select::{Either, select};
+use embassy_futures::join::join5;
+use embassy_stm32::can::{BufferedFdCanReceiver, BufferedFdCanSender};
 use embassy_stm32::usart::BufferedUart;
 use embassy_usb::{
     Builder,
@@ -20,6 +22,7 @@ use embedded_io_async::{Read, Write};
 use panic_halt as _;
 use static_cell::StaticCell;
 use swd::Swd;
+use wiring::Ports;
 
 const PACKET: usize = 64;
 // Track linker-script changes so Cargo relinks the firmware.
@@ -51,32 +54,59 @@ async fn main(_spawner: Spawner) {
     let dap = dap_usb::DapUsb::new(&mut builder);
     let control = CdcAcmClass::new(&mut builder, CTL_STATE.init(State::new()), PACKET as u16);
     let serial = CdcAcmClass::new(&mut builder, UART_STATE.init(State::new()), PACKET as u16);
+    // SocketCAN (gs_usb) vendor interface with its two bulk endpoints.
+    let gs = gs_usb::GsUsb::new(&mut builder);
     let mut device = builder.build();
-    join4(
+
+    let Ports { can_tx, can_rx, uart } = ports;
+
+    join5(
         device.run(),
-        control_port(control, ports.can, swd),
-        uart_port(serial, ports.uart),
+        control_port(control, can_tx.clone(), can_rx.clone(), swd),
+        uart_port(serial, uart),
         dap.run(),
+        gs.run(can_tx, can_rx),
     )
     .await;
 }
 
+/// CAN/control serial port: classic + FD commands, plus active forwarding of
+/// received frames back to the host (the bidirectional bridge).
 async fn control_port(
-    mut usb: CdcAcmClass<'static, Usb>,
-    mut can: Can<'static>,
+    usb: CdcAcmClass<'static, Usb>,
+    mut can_tx: BufferedFdCanSender,
+    can_rx: BufferedFdCanReceiver,
     mut swd: Option<Swd>,
 ) {
+    // Split so replies can span several 64-byte USB packets (FD payloads are long).
+    let (mut usb_tx, mut usb_rx) = usb.split();
     let mut packet = [0; PACKET];
     loop {
-        usb.wait_connection().await;
+        usb_rx.wait_connection().await;
         let mut line = protocol::Line::new();
-        'connection: while let Ok(n) = usb.read_packet(&mut packet).await {
-            for &byte in &packet[..n] {
-                if let Some(command) = line.push(byte) {
-                    let reply = protocol::execute(command, &mut can, &mut swd).await;
-                    // Responses are bounded below 64 B, so USB needs no extra ZLP.
-                    if usb.write_packet(reply.as_bytes()).await.is_err() {
+        'connection: loop {
+            let host = usb_rx.read_packet(&mut packet);
+            let can = can_rx.receive();
+            match select(host, can).await {
+                Either::First(result) => {
+                    let Ok(n) = result else {
                         break 'connection;
+                    };
+                    for &byte in &packet[..n] {
+                        if let Some(command) = line.push(byte) {
+                            let reply = protocol::execute(command, &mut can_tx, &can_rx, &mut swd).await;
+                            if usb_tx.write_all(reply.as_bytes()).await.is_err() {
+                                break 'connection;
+                            }
+                        }
+                    }
+                }
+                Either::Second(can_result) => {
+                    if let Ok(env) = can_result {
+                        let reply = protocol::format_frame(&env);
+                        if usb_tx.write_all(reply.as_bytes()).await.is_err() {
+                            break 'connection;
+                        }
                     }
                 }
             }
